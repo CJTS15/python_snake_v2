@@ -1,4 +1,4 @@
-# 🐍 Python Snack V2
+# 🐍 Python Snake V2
 
 A modern, cartoonish twist on the classic Snake game built with Python and Pygame. This isn't your Nokia 3310 snake—it features smooth interpolated movement, wavy body animations, progressive difficulty, and a chaotic bomb mechanic!
 
