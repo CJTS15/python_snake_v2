@@ -49,6 +49,8 @@ python snake_game.py
 
 You can tweak the game settings at the top of the snake_game.py file:
 
+```
 SCREEN_WIDTH = 810       # Must be divisible by GRID_SIZE (30)
 START_MOVE_DELAY = 150   # Higher = Slower start speed
 APPLES_FOR_EVENT = 10    # How often bombs/cookies spawn
+```
