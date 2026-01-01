@@ -34,6 +34,9 @@ clock = pygame.time.Clock()
 # --- Asset Loading ---
 sprites_loaded = False
 try:
+    # Background
+    bg_image = pygame.image.load("background.png")
+
     # Existing assets
     raw_head = pygame.image.load("head.png").convert_alpha()
     raw_body = pygame.image.load("body.png").convert_alpha()
@@ -440,12 +443,13 @@ def main():
             if alpha > 1.0: alpha = 1.0
 
         # 3. Drawing
-        screen.fill(COLOR_BG)
+        screen.blit(bg_image, (0, 0))
+        # screen.fill(COLOR_BG)
 
-        for x in range(0, SCREEN_WIDTH + 1, GRID_SIZE):
-            pygame.draw.line(screen, (230, 230, 250), (x, 0), (x, SCREEN_HEIGHT))
-        for y in range(0, SCREEN_HEIGHT + 1, GRID_SIZE):
-            pygame.draw.line(screen, (230, 230, 250), (0, y), (SCREEN_WIDTH, y))
+        # for x in range(0, SCREEN_WIDTH + 1, GRID_SIZE):
+        #     pygame.draw.line(screen, (230, 230, 250), (x, 0), (x, SCREEN_HEIGHT))
+        # for y in range(0, SCREEN_HEIGHT + 1, GRID_SIZE):
+        #     pygame.draw.line(screen, (230, 230, 250), (0, y), (SCREEN_WIDTH, y))
 
         if current_state == STATE_MENU:
             title_surf = font_title.render("Snake 2.0", True, (255, 105, 180))
