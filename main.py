@@ -4,84 +4,115 @@ import random
 import math
 
 # --- Configuration & Constants ---
-SCREEN_WIDTH = 810  
-SCREEN_HEIGHT = 600
+# We use "Virtual" dimensions for the game logic.
+# The window can be any size, but the game thinks it's 810x600.
+VIRTUAL_WIDTH = 810
+VIRTUAL_HEIGHT = 600
 GRID_SIZE = 30  
-GRID_WIDTH = SCREEN_WIDTH // GRID_SIZE
-GRID_HEIGHT = SCREEN_HEIGHT // GRID_SIZE
+GRID_WIDTH = VIRTUAL_WIDTH // GRID_SIZE
+GRID_HEIGHT = VIRTUAL_HEIGHT // GRID_SIZE
 
 # Colors
 COLOR_BG = (240, 248, 255)
 COLOR_TEXT = (50, 50, 80)
 COLOR_BUTTON = (100, 149, 237)
 COLOR_BUTTON_HOVER = (65, 105, 225)
+COLOR_TIMER = (255, 140, 0) 
+COLOR_LETTERBOX = (20, 20, 20) # Color of the black bars in fullscreen
 
 # Game Speed Settings
-START_MOVE_DELAY = 180  
-DELAY_DECREMENT = 8     
-MIN_MOVE_DELAY = 30     
+START_MOVE_DELAY = 110.0   
+DELAY_DECREMENT = 0.5      
+MIN_MOVE_DELAY = 20.0      
 
 # Event Settings
-APPLES_FOR_EVENT = 10  # Every 10 apples, trigger event
+APPLES_FOR_EVENT = 10  
+SCORE_FOR_ROCK = 200   
+STAR_DURATION = 10000 
 
 # Initialize Pygame
 pygame.init()
 pygame.mixer.init()
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Snake 2.0")
+
+# Create the actual window (Resizable)
+screen = pygame.display.set_mode((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.RESIZABLE)
+pygame.display.set_caption("Snake 2.0 - Python Snake Game")
+
+# Create the "Virtual" Surface where we draw everything
+game_surface = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+
 clock = pygame.time.Clock()
 
 # --- Asset Loading ---
 sprites_loaded = False
 try:
-    # Background
-    bg_image = pygame.image.load("background.png")
+    try: bg_image = pygame.image.load("background.png")
+    except: bg_image = None
 
-    # Existing assets
     raw_head = pygame.image.load("head.png").convert_alpha()
     raw_body = pygame.image.load("body.png").convert_alpha()
     raw_apple = pygame.image.load("apple.png").convert_alpha()
     raw_cookie = pygame.image.load("cookie.png").convert_alpha()
     raw_bomb = pygame.image.load("bomb.png").convert_alpha()
+    raw_rock = pygame.image.load("rock.png").convert_alpha()
+    raw_star = pygame.image.load("star.png").convert_alpha()
 
-    # Scaling
+    # Scale Sprites
     img_head = pygame.transform.scale(raw_head, (GRID_SIZE, GRID_SIZE))
-    img_body = pygame.transform.scale(raw_body, (GRID_SIZE + 4, GRID_SIZE + 4)) 
+    img_body = pygame.transform.scale(raw_body, (GRID_SIZE + 2, GRID_SIZE + 2)) 
     img_apple = pygame.transform.scale(raw_apple, (GRID_SIZE, GRID_SIZE))
     img_cookie = pygame.transform.scale(raw_cookie, (GRID_SIZE, GRID_SIZE))
     img_bomb = pygame.transform.scale(raw_bomb, (GRID_SIZE, GRID_SIZE))
+    img_rock = pygame.transform.scale(raw_rock, (GRID_SIZE * 2, GRID_SIZE * 2))
+    img_star = pygame.transform.scale(raw_star, (GRID_SIZE + 4, GRID_SIZE + 4))
     
     sprites_loaded = True
 except FileNotFoundError:
     print("One or more images not found. Using fallback shapes.")
 
+# --- Helper: Virtual Mouse Coordinates ---
+def get_virtual_mouse_pos():
+    """
+    Translates the real mouse position on the resizable window 
+    to the coordinates on the 810x600 game surface.
+    """
+    real_w, real_h = screen.get_size()
+    real_mouse = pygame.mouse.get_pos()
+    
+    # Calculate scale factor (Aspect Ratio Fit)
+    scale = min(real_w / VIRTUAL_WIDTH, real_h / VIRTUAL_HEIGHT)
+    
+    # Calculate the size of the game on screen
+    new_w = VIRTUAL_WIDTH * scale
+    new_h = VIRTUAL_HEIGHT * scale
+    
+    # Calculate offset (centering)
+    offset_x = (real_w - new_w) // 2
+    offset_y = (real_h - new_h) // 2
+    
+    # Translate coordinate
+    vx = (real_mouse[0] - offset_x) / scale
+    vy = (real_mouse[1] - offset_y) / scale
+    
+    return int(vx), int(vy)
+
 # --- Sound Manager ---
 class SoundManager:
     def __init__(self):
         self.sounds_enabled = True
-        try:
-            # self.snd_eat = pygame.mixer.Sound('eat.wav')
-            pass
-        except:
-            self.sounds_enabled = False
+        try: pygame.mixer.get_init()
+        except: self.sounds_enabled = False
 
-    def play_eat(self):
+    def play_sound(self, file_name):
         if self.sounds_enabled:
-            pygame.mixer.Sound('eat.wav').play()
-            pass 
+            try: pygame.mixer.Sound(file_name).play()
+            except: pass
 
-    def play_crash(self):
-        if self.sounds_enabled:
-            pygame.mixer.Sound('crash.wav').play()
-            pass
-    def play_bonus(self):
-        if self.sounds_enabled:
-            pygame.mixer.Sound('bonus.wav').play()
-            pass
-    def play_explode(self):
-        if self.sounds_enabled:
-            pygame.mixer.Sound('explode.wav').play()
-            pass
+    def play_eat(self): self.play_sound('eat.wav')
+    def play_crash(self): self.play_sound('crash.wav')
+    def play_bonus(self): self.play_sound('bonus.wav')
+    def play_explode(self): self.play_sound('explode.wav')
+    def play_powerup(self): self.play_sound('powerup.wav')
 
 sound_manager = SoundManager()
 
@@ -96,18 +127,22 @@ class Button:
         self.font = pygame.font.SysFont("comicsansms", 24, bold=True)
 
     def draw(self, surface):
-        mouse_pos = pygame.mouse.get_pos()
-        current_color = self.hover_color if self.rect.collidepoint(mouse_pos) else self.color
+        # We pass the virtual mouse pos to check hover state
+        vx, vy = get_virtual_mouse_pos()
+        is_hovered = self.rect.collidepoint(vx, vy)
+        
+        current_color = self.hover_color if is_hovered else self.color
         pygame.draw.rect(surface, current_color, self.rect, border_radius=15)
         pygame.draw.rect(surface, (255, 255, 255), self.rect, 3, border_radius=15)
         text_surf = self.font.render(self.text, True, (255, 255, 255))
         text_rect = text_surf.get_rect(center=self.rect.center)
         surface.blit(text_surf, text_rect)
 
-    def is_clicked(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.rect.collidepoint(event.pos):
-                return True
+    def is_clicked(self):
+        # We don't rely on event.pos directly, we rely on calculated virtual pos
+        vx, vy = get_virtual_mouse_pos()
+        if self.rect.collidepoint(vx, vy):
+            return True
         return False
 
 # --- Game Classes ---
@@ -120,12 +155,12 @@ class Snake:
                      (GRID_WIDTH // 2 - 1, GRID_HEIGHT // 2), 
                      (GRID_WIDTH // 2 - 2, GRID_HEIGHT // 2),
                      (GRID_WIDTH // 2 - 3, GRID_HEIGHT // 2)]
-        
         self.prev_body = list(self.body)
         self.direction = (1, 0)
         self.new_direction = (1, 0)
         self.grow = False
         self.alive = True
+        self.wrap_mode = False 
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -139,16 +174,13 @@ class Snake:
                 self.new_direction = (1, 0)
 
     def shrink(self, amount):
-        """Removes 'amount' segments from the tail."""
         current_len = len(self.body)
-        # Keep at least the head
         new_len = max(1, current_len - amount)
         self.body = self.body[:new_len]
         self.prev_body = self.prev_body[:new_len]
 
     def update_logic(self):
-        if not self.alive:
-            return
+        if not self.alive: return
 
         self.prev_body = list(self.body)
         self.direction = self.new_direction
@@ -157,10 +189,13 @@ class Snake:
         dx, dy = self.direction
         new_head = (head_x + dx, head_y + dy)
 
-        if new_head[0] < 0 or new_head[0] >= GRID_WIDTH or new_head[1] < 0 or new_head[1] >= GRID_HEIGHT:
-            self.alive = False
-            sound_manager.play_crash()
-            return
+        if self.wrap_mode:
+            new_head = (new_head[0] % GRID_WIDTH, new_head[1] % GRID_HEIGHT)
+        else:
+            if new_head[0] < 0 or new_head[0] >= GRID_WIDTH or new_head[1] < 0 or new_head[1] >= GRID_HEIGHT:
+                self.alive = False
+                sound_manager.play_crash()
+                return
 
         if new_head in self.body:
             self.alive = False
@@ -168,6 +203,7 @@ class Snake:
             return
 
         self.body.insert(0, new_head)
+        
         if not self.grow:
             self.body.pop()
         else:
@@ -176,34 +212,37 @@ class Snake:
 
     def draw(self, surface, interpolation_alpha):
         time_ticks = pygame.time.get_ticks()
-        wiggle_amp = 8.0 
-        wiggle_freq = 1.25
-        wiggle_speed = 0.005
+        wiggle_amp = 4.0 
+        wiggle_freq = 0.6
+        wiggle_speed = 0.01
 
         for i in range(len(self.body) - 1, -1, -1):
             curr_x, curr_y = self.body[i]
-            
-            if i < len(self.prev_body):
-                prev_x, prev_y = self.prev_body[i]
-            else:
-                prev_x, prev_y = curr_x, curr_y
+            if i < len(self.prev_body): prev_x, prev_y = self.prev_body[i]
+            else: prev_x, prev_y = curr_x, curr_y
 
-            exact_x = prev_x * GRID_SIZE + (curr_x * GRID_SIZE - prev_x * GRID_SIZE) * interpolation_alpha
-            exact_y = prev_y * GRID_SIZE + (curr_y * GRID_SIZE - prev_y * GRID_SIZE) * interpolation_alpha
+            # Disable interpolation on wrap-around to prevent flying artifacts
+            if abs(curr_x - prev_x) > 1 or abs(curr_y - prev_y) > 1:
+                exact_x = curr_x * GRID_SIZE
+                exact_y = curr_y * GRID_SIZE
+            else:
+                exact_x = prev_x * GRID_SIZE + (curr_x * GRID_SIZE - prev_x * GRID_SIZE) * interpolation_alpha
+                exact_y = prev_y * GRID_SIZE + (curr_y * GRID_SIZE - prev_y * GRID_SIZE) * interpolation_alpha
 
             if i > 0:
                 wave = math.sin(i * wiggle_freq - time_ticks * wiggle_speed) * wiggle_amp
             else:
                 wave = 0
             
-            if i == 0:
-                dx, dy = self.direction
+            if i == 0: dx, dy = self.direction
             else:
                 p_x, p_y = self.body[i-1]
                 dx = p_x - curr_x
                 dy = p_y - curr_y
 
-            if dx != 0: exact_y += wave
+            if abs(dx) > 1 or abs(dy) > 1:
+                pass 
+            elif dx != 0: exact_y += wave
             else:       exact_x += wave
 
             if sprites_loaded:
@@ -213,7 +252,6 @@ class Snake:
                     elif self.direction == (-1, 0): angle = 90
                     elif self.direction == (0, 1): angle = 180
                     elif self.direction == (0, -1): angle = 0
-                    
                     rotated_head = pygame.transform.rotate(img_head, angle)
                     rect = rotated_head.get_rect(center=(exact_x + GRID_SIZE/2, exact_y + GRID_SIZE/2))
                     surface.blit(rotated_head, rect)
@@ -233,7 +271,6 @@ class Item:
         self.color = fallback_color
     
     def spawn_random(self, occupied_positions):
-        # Limit attempts to prevent infinite loops if screen is full
         attempts = 0
         while attempts < 500:
             x = random.randint(0, GRID_WIDTH - 1)
@@ -246,11 +283,9 @@ class Item:
     
     def draw(self, surface):
         if not self.active: return
-        
         x, y = self.position
         pos_x = x * GRID_SIZE
         pos_y = y * GRID_SIZE
-        
         bob = math.sin(pygame.time.get_ticks() * 0.005) * 4
 
         if sprites_loaded and self.sprite:
@@ -258,6 +293,44 @@ class Item:
         else:
             center = (pos_x + GRID_SIZE // 2, int(pos_y + GRID_SIZE // 2 + bob))
             pygame.draw.circle(surface, self.color, center, GRID_SIZE // 2)
+
+class BigRock:
+    def __init__(self, img_sprite):
+        self.position = (-1, -1)
+        self.active = False
+        self.sprite = img_sprite
+        self.footprint = [] 
+
+    def spawn_random(self, occupied_positions):
+        attempts = 0
+        while attempts < 500:
+            x = random.randint(0, GRID_WIDTH - 2)
+            y = random.randint(0, GRID_HEIGHT - 2)
+            proposed_area = [(x, y), (x+1, y), (x, y+1), (x+1, y+1)]
+            
+            collision = False
+            for spot in proposed_area:
+                if spot in occupied_positions:
+                    collision = True
+                    break
+            
+            if not collision:
+                self.position = (x, y)
+                self.footprint = proposed_area
+                self.active = True
+                break
+            attempts += 1
+
+    def draw(self, surface):
+        if not self.active: return
+        x, y = self.position
+        pos_x = x * GRID_SIZE
+        pos_y = y * GRID_SIZE
+        if sprites_loaded and self.sprite:
+            surface.blit(self.sprite, (pos_x, pos_y))
+        else:
+            rect = pygame.Rect(pos_x, pos_y, GRID_SIZE * 2, GRID_SIZE * 2)
+            pygame.draw.rect(surface, (100, 100, 100), rect)
 
 # --- Game States ---
 STATE_MENU = 0
@@ -273,20 +346,25 @@ def main():
     snake = Snake()
     apple = Item(img_apple, (255, 50, 50))
     cookie = Item(img_cookie, (210, 180, 140))
+    star = Item(img_star, (255, 255, 0)) 
     
     bombs = [] 
+    rocks = [] 
     
     score = 0
-    move_delay = START_MOVE_DELAY
+    move_delay = START_MOVE_DELAY 
     last_move_time = pygame.time.get_ticks()
+    
     apples_eaten_count = 0 
+    rock_milestone = SCORE_FOR_ROCK 
+    star_end_time = 0
     
     font_score = pygame.font.SysFont("comicsansms", 30, bold=True)
     font_title = pygame.font.SysFont("comicsansms", 72, bold=True)
     font_inst = pygame.font.SysFont("comicsansms", 26)
     
     btn_w, btn_h = 200, 50
-    cx = SCREEN_WIDTH // 2 - btn_w // 2
+    cx = VIRTUAL_WIDTH // 2 - btn_w // 2
     
     btn_new_game = Button("New Game", cx, 250, btn_w, btn_h, "new")
     btn_inst = Button("Instructions", cx, 320, btn_w, btn_h, "inst")
@@ -304,8 +382,13 @@ def main():
         occ = set(snake.body)
         if apple.active: occ.add(apple.position)
         if cookie.active: occ.add(cookie.position)
+        if star.active: occ.add(star.position)
         for b in bombs:
             if b.active: occ.add(b.position)
+        for r in rocks:
+            if r.active: 
+                for spot in r.footprint:
+                    occ.add(spot)
         return occ
 
     running = True
@@ -317,49 +400,68 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
             
+            # Fullscreen Toggle Logic
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_F11:
+                    is_fullscreen = pygame.display.is_fullscreen()
+                    if is_fullscreen:
+                        pygame.display.set_mode((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.RESIZABLE)
+                    else:
+                        pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+
             if current_state == STATE_GAME:
                 snake.handle_input(event)
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     current_state = STATE_PAUSE
             
             elif current_state == STATE_MENU:
-                for btn in menu_buttons:
-                    if btn.is_clicked(event):
-                        if btn.action_code == "new":
-                            snake.reset()
-                            score = 0
-                            move_delay = START_MOVE_DELAY
-                            last_move_time = current_time
-                            apples_eaten_count = 0
-                            bombs = []
-                            cookie.active = False
-                            apple.spawn_random(get_occupied())
-                            current_state = STATE_GAME
-                        elif btn.action_code == "inst":
-                            current_state = STATE_INSTRUCTION
-                        elif btn.action_code == "quit":
-                            running = False
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    for btn in menu_buttons:
+                        if btn.is_clicked(): # Using virtual mouse internally
+                            if btn.action_code == "new":
+                                snake.reset()
+                                score = 0
+                                move_delay = START_MOVE_DELAY
+                                last_move_time = current_time
+                                apples_eaten_count = 0
+                                bombs = []
+                                rocks = []
+                                rock_milestone = SCORE_FOR_ROCK
+                                cookie.active = False
+                                star.active = False
+                                star_end_time = 0
+                                apple.spawn_random(get_occupied())
+                                current_state = STATE_GAME
+                            elif btn.action_code == "inst":
+                                current_state = STATE_INSTRUCTION
+                            elif btn.action_code == "quit":
+                                running = False
                             
             elif current_state == STATE_PAUSE:
-                for btn in pause_buttons:
-                    if btn.is_clicked(event):
-                        if btn.action_code == "resume":
-                            last_move_time = current_time 
-                            current_state = STATE_GAME
-                        elif btn.action_code == "new":
-                            snake.reset()
-                            score = 0
-                            move_delay = START_MOVE_DELAY
-                            last_move_time = current_time
-                            apples_eaten_count = 0
-                            bombs = []
-                            cookie.active = False
-                            apple.spawn_random(get_occupied())
-                            current_state = STATE_GAME
-                        elif btn.action_code == "inst":
-                            current_state = STATE_INSTRUCTION
-                        elif btn.action_code == "quit":
-                            running = False
+                if event.type == pygame.MOUSEBUTTONDOWN:
+                    for btn in pause_buttons:
+                        if btn.is_clicked():
+                            if btn.action_code == "resume":
+                                last_move_time = current_time 
+                                current_state = STATE_GAME
+                            elif btn.action_code == "new":
+                                snake.reset()
+                                score = 0
+                                move_delay = START_MOVE_DELAY
+                                last_move_time = current_time
+                                apples_eaten_count = 0
+                                bombs = []
+                                rocks = []
+                                rock_milestone = SCORE_FOR_ROCK
+                                cookie.active = False
+                                star.active = False
+                                star_end_time = 0
+                                apple.spawn_random(get_occupied())
+                                current_state = STATE_GAME
+                            elif btn.action_code == "inst":
+                                current_state = STATE_INSTRUCTION
+                            elif btn.action_code == "quit":
+                                running = False
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     last_move_time = current_time
                     current_state = STATE_GAME
@@ -380,7 +482,11 @@ def main():
                         last_move_time = current_time
                         apples_eaten_count = 0
                         bombs = []
+                        rocks = []
+                        rock_milestone = SCORE_FOR_ROCK
                         cookie.active = False
+                        star.active = False
+                        star_end_time = 0
                         apple.spawn_random(get_occupied())
                         current_state = STATE_GAME
                     elif event.key == pygame.K_ESCAPE:
@@ -390,128 +496,158 @@ def main():
         alpha = 0.0
         
         if current_state == STATE_GAME:
+            if current_time < star_end_time: snake.wrap_mode = True
+            else: snake.wrap_mode = False
+
             time_since_move = current_time - last_move_time
             if time_since_move >= move_delay:
                 snake.update_logic()
                 last_move_time = current_time
                 time_since_move = 0
-                
                 head = snake.body[0]
                 
-                # A. Apple Collision
+                if score >= rock_milestone:
+                    r = BigRock(img_rock if sprites_loaded else None)
+                    r.spawn_random(get_occupied())
+                    rocks.append(r)
+                    rock_milestone += SCORE_FOR_ROCK
+
+                # Interactions
                 if head == apple.position:
                     snake.grow = True
                     score += 10
                     sound_manager.play_eat()
                     move_delay = max(MIN_MOVE_DELAY, move_delay - DELAY_DECREMENT)
-                    
-                    # --- EVENT LOGIC ---
                     apples_eaten_count += 1
                     
-                    # Modulo operator checks if count is 10, 20, 30, etc.
                     if apples_eaten_count % APPLES_FOR_EVENT == 0:
-                        
-                        # 1. Spawn Cookie
                         cookie.spawn_random(get_occupied())
-                        
-                        # 2. Spawn 2 NEW Bombs (Adding to the existing ones)
-                        for _ in range(2):
+                        for _ in range(4):
                             b = Item(img_bomb, (0, 0, 0))
                             b.spawn_random(get_occupied())
                             bombs.append(b)
-                            
+                    
+                    if not star.active and current_time > star_end_time:
+                        if random.random() < 0.15: star.spawn_random(get_occupied())
                     apple.spawn_random(get_occupied())
 
-                # B. Cookie Collision
                 if cookie.active and head == cookie.position:
                     score += 50
                     sound_manager.play_bonus()
                     cookie.active = False
                 
-                # C. Bomb Collision
+                if star.active and head == star.position:
+                    sound_manager.play_powerup()
+                    star_end_time = current_time + STAR_DURATION
+                    star.active = False
+
                 for b in bombs[:]: 
                     if b.active and head == b.position:
                         sound_manager.play_explode()
-                        snake.shrink(4) # Lose 4 body parts
+                        if len(snake.body) <= 4: snake.alive = False 
+                        else: snake.shrink(4)
                         b.active = False
                         bombs.remove(b)
+                
+                for r in rocks:
+                    if r.active and (head in r.footprint):
+                        sound_manager.play_crash()
+                        snake.alive = False
 
-                if not snake.alive:
-                    current_state = STATE_GAMEOVER
+                if not snake.alive: current_state = STATE_GAMEOVER
             
             alpha = time_since_move / move_delay
             if alpha > 1.0: alpha = 1.0
 
-        # 3. Drawing
-        screen.blit(bg_image, (0, 0))
-        # screen.fill(COLOR_BG)
+        # 3. Drawing (Draw to Virtual Surface)
+        if bg_image: game_surface.blit(bg_image, (0, 0))
+        else: game_surface.fill(COLOR_BG)
 
-        # for x in range(0, SCREEN_WIDTH + 1, GRID_SIZE):
-        #     pygame.draw.line(screen, (230, 230, 250), (x, 0), (x, SCREEN_HEIGHT))
-        # for y in range(0, SCREEN_HEIGHT + 1, GRID_SIZE):
-        #     pygame.draw.line(screen, (230, 230, 250), (0, y), (SCREEN_WIDTH, y))
+        if snake.wrap_mode:
+            pygame.draw.rect(game_surface, (255, 215, 0), (0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT), 5)
+        else:
+            pygame.draw.rect(game_surface, (50, 50, 50), (0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT), 2)
 
         if current_state == STATE_MENU:
             title_surf = font_title.render("Snake 2.0", True, (255, 105, 180))
             title_shadow = font_title.render("Snake 2.0", True, (100, 100, 100))
-            screen.blit(title_shadow, (SCREEN_WIDTH//2 - title_surf.get_width()//2 + 3, 103))
-            screen.blit(title_surf, (SCREEN_WIDTH//2 - title_surf.get_width()//2, 100))
-            for btn in menu_buttons:
-                btn.draw(screen)
+            game_surface.blit(title_shadow, (VIRTUAL_WIDTH//2 - title_surf.get_width()//2 + 3, 103))
+            game_surface.blit(title_surf, (VIRTUAL_WIDTH//2 - title_surf.get_width()//2, 100))
+            for btn in menu_buttons: btn.draw(game_surface)
 
         elif current_state == STATE_GAME:
-            apple.draw(screen)
-            cookie.draw(screen)
-            for b in bombs:
-                b.draw(screen)
-            snake.draw(screen, alpha)
+            apple.draw(game_surface)
+            cookie.draw(game_surface)
+            star.draw(game_surface)
+            for b in bombs: b.draw(game_surface)
+            for r in rocks: r.draw(game_surface)
+            snake.draw(game_surface, alpha)
+            
             score_text = font_score.render(f"Score: {score}", True, COLOR_TEXT)
-            screen.blit(score_text, (20, 20))
+            game_surface.blit(score_text, (20, 20))
+            if current_time < star_end_time:
+                remaining_sec = math.ceil((star_end_time - current_time) / 1000)
+                timer_text = font_score.render(f"Powerup: {remaining_sec}s", True, COLOR_TIMER)
+                game_surface.blit(timer_text, (20, 55))
 
         elif current_state == STATE_PAUSE:
-            apple.draw(screen)
-            cookie.draw(screen)
-            for b in bombs: b.draw(screen)
-            snake.draw(screen, 0.0)
-            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            apple.draw(game_surface)
+            cookie.draw(game_surface)
+            star.draw(game_surface)
+            for b in bombs: b.draw(game_surface)
+            for r in rocks: r.draw(game_surface)
+            snake.draw(game_surface, 0.0) 
+            overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 128))
-            screen.blit(overlay, (0, 0))
+            game_surface.blit(overlay, (0, 0))
             status_text = font_title.render("Game Paused", True, (255, 255, 255))
-            screen.blit(status_text, (SCREEN_WIDTH//2 - status_text.get_width()//2, 100))
-            for btn in pause_buttons:
-                btn.draw(screen)
+            game_surface.blit(status_text, (VIRTUAL_WIDTH//2 - status_text.get_width()//2, 100))
+            for btn in pause_buttons: btn.draw(game_surface)
 
         elif current_state == STATE_INSTRUCTION:
-            screen.fill((255, 253, 208)) 
+            game_surface.fill((255, 253, 208)) 
             inst_title = font_title.render("How to Play", True, COLOR_TEXT)
-            screen.blit(inst_title, (SCREEN_WIDTH//2 - inst_title.get_width()//2, 50))
+            game_surface.blit(inst_title, (VIRTUAL_WIDTH//2 - inst_title.get_width()//2, 50))
             lines = [
-                "Arrows to Move.",
-                "Eat Apples (+10 pts) & Speed Up.",
-                "Every 10 Apples:",
-                "  -> A COOKIE appears (+50 pts).",
-                "  -> 2 NEW BOMBS appear (They stack!)",
-                "Hit a BOMB to lose tail.",
-                "Don't hit walls or yourself!",
-                "ESC to Pause."
+                "Arrows to Move. Eat Apples (+10 pts)",
+                "Every 10 Apples: Cookies & Bombs appear.",
+                "STAR = 10s Wall Pass (Pass through walls!)",
+                "Hit BOMB = Lose Tail (DIE if too short!).",
+                "Hit ROCK = GAME OVER.",
+                "ESC to Pause. F11 for Fullscreen.",
             ]
             for i, line in enumerate(lines):
                 txt = font_inst.render(line, True, COLOR_TEXT)
-                screen.blit(txt, (SCREEN_WIDTH//2 - txt.get_width()//2, 150 + i * 40))
+                game_surface.blit(txt, (VIRTUAL_WIDTH//2 - txt.get_width()//2, 150 + i * 40))
 
         elif current_state == STATE_GAMEOVER:
-            apple.draw(screen)
-            for b in bombs: b.draw(screen)
-            snake.draw(screen, 1.0)
-            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            apple.draw(game_surface)
+            for b in bombs: b.draw(game_surface)
+            for r in rocks: r.draw(game_surface)
+            snake.draw(game_surface, 1.0)
+            overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
             overlay.fill((50, 0, 0, 128))
-            screen.blit(overlay, (0, 0))
+            game_surface.blit(overlay, (0, 0))
             msg1 = font_title.render("Game Over!", True, (255, 255, 0))
             msg2 = font_score.render(f"Final Score: {score}", True, (255, 255, 255))
             msg3 = font_inst.render("Press ENTER to Restart", True, (200, 200, 200))
-            screen.blit(msg1, (SCREEN_WIDTH//2 - msg1.get_width()//2, 200))
-            screen.blit(msg2, (SCREEN_WIDTH//2 - msg2.get_width()//2, 280))
-            screen.blit(msg3, (SCREEN_WIDTH//2 - msg3.get_width()//2, 350))
+            game_surface.blit(msg1, (VIRTUAL_WIDTH//2 - msg1.get_width()//2, 200))
+            game_surface.blit(msg2, (VIRTUAL_WIDTH//2 - msg2.get_width()//2, 280))
+            game_surface.blit(msg3, (VIRTUAL_WIDTH//2 - msg3.get_width()//2, 350))
+
+        # --- Scale and Draw to Real Screen ---
+        screen.fill(COLOR_LETTERBOX) # Fill black bars
+        
+        real_w, real_h = screen.get_size()
+        scale = min(real_w / VIRTUAL_WIDTH, real_h / VIRTUAL_HEIGHT)
+        new_w = int(VIRTUAL_WIDTH * scale)
+        new_h = int(VIRTUAL_HEIGHT * scale)
+        
+        scaled_surf = pygame.transform.scale(game_surface, (new_w, new_h))
+        offset_x = (real_w - new_w) // 2
+        offset_y = (real_h - new_h) // 2
+        
+        screen.blit(scaled_surf, (offset_x, offset_y))
 
         pygame.display.flip()
         clock.tick(60) 
