@@ -17,13 +17,13 @@ COLOR_BG = (240, 248, 255)
 COLOR_TEXT = (50, 50, 80)
 COLOR_BUTTON = (100, 149, 237)
 COLOR_BUTTON_HOVER = (65, 105, 225)
-COLOR_TIMER = (255, 140, 0) 
-COLOR_LETTERBOX = (20, 20, 20) # Color of the black bars in fullscreen
+COLOR_TIMER = (255, 215, 0) 
+COLOR_LETTERBOX = (50, 50, 50)
 
 # Game Speed Settings
-START_MOVE_DELAY = 110.0   
-DELAY_DECREMENT = 0.5      
-MIN_MOVE_DELAY = 20.0      
+START_MOVE_DELAY = 160.0   
+DELAY_DECREMENT = 1.75      
+MIN_MOVE_DELAY = 10.0      
 
 # Event Settings
 APPLES_FOR_EVENT = 10  
@@ -60,11 +60,11 @@ try:
     # Scale Sprites
     img_head = pygame.transform.scale(raw_head, (GRID_SIZE, GRID_SIZE))
     img_body = pygame.transform.scale(raw_body, (GRID_SIZE + 2, GRID_SIZE + 2)) 
-    img_apple = pygame.transform.scale(raw_apple, (GRID_SIZE, GRID_SIZE))
-    img_cookie = pygame.transform.scale(raw_cookie, (GRID_SIZE, GRID_SIZE))
-    img_bomb = pygame.transform.scale(raw_bomb, (GRID_SIZE, GRID_SIZE))
-    img_rock = pygame.transform.scale(raw_rock, (GRID_SIZE * 2, GRID_SIZE * 2))
-    img_star = pygame.transform.scale(raw_star, (GRID_SIZE + 4, GRID_SIZE + 4))
+    img_apple = pygame.transform.scale(raw_apple, (GRID_SIZE + 8, GRID_SIZE + 8))
+    img_cookie = pygame.transform.scale(raw_cookie, (GRID_SIZE + 8, GRID_SIZE + 8))
+    img_bomb = pygame.transform.scale(raw_bomb, (GRID_SIZE + 8, GRID_SIZE + 8))
+    img_rock = pygame.transform.scale(raw_rock, (GRID_SIZE * 3, GRID_SIZE * 3))
+    img_star = pygame.transform.scale(raw_star, (GRID_SIZE + 8, GRID_SIZE + 8))
     
     sprites_loaded = True
 except FileNotFoundError:
@@ -100,19 +100,44 @@ def get_virtual_mouse_pos():
 class SoundManager:
     def __init__(self):
         self.sounds_enabled = True
-        try: pygame.mixer.get_init()
-        except: self.sounds_enabled = False
+        try: 
+            pygame.mixer.get_init()
+        except: 
+            self.sounds_enabled = False
+        
+        # We must hold the sound object in a variable to stop it later
+        self.powerup_loop_snd = None 
+        
+        if self.sounds_enabled:
+            try:
+                # Pre-load the loop sound specifically
+                self.powerup_loop_snd = pygame.mixer.Sound('powerup_loop.wav')
+            except:
+                print("Warning: powerup_loop.wav not found")
 
+    # This generic function is fine for one-off sounds (eat, crash)
     def play_sound(self, file_name):
         if self.sounds_enabled:
             try: pygame.mixer.Sound(file_name).play()
             except: pass
 
+    # One-shot sounds
     def play_eat(self): self.play_sound('eat.wav')
     def play_crash(self): self.play_sound('crash.wav')
     def play_bonus(self): self.play_sound('bonus.wav')
     def play_explode(self): self.play_sound('explode.wav')
     def play_powerup(self): self.play_sound('powerup.wav')
+
+    # --- LOOPING LOGIC ---
+    def start_powerup_loop(self):
+        # We check if the variable exists, not the function
+        if self.powerup_loop_snd:
+            self.powerup_loop_snd.stop() # Stop just in case it's running
+            self.powerup_loop_snd.play(loops=-1) # -1 means loop forever
+        
+    def stop_powerup_loop(self):
+        if self.powerup_loop_snd:
+            self.powerup_loop_snd.stop()
 
 sound_manager = SoundManager()
 
@@ -419,6 +444,7 @@ def main():
                     for btn in menu_buttons:
                         if btn.is_clicked(): # Using virtual mouse internally
                             if btn.action_code == "new":
+                                sound_manager.stop_powerup_loop()
                                 snake.reset()
                                 score = 0
                                 move_delay = START_MOVE_DELAY
@@ -496,8 +522,11 @@ def main():
         alpha = 0.0
         
         if current_state == STATE_GAME:
-            if current_time < star_end_time: snake.wrap_mode = True
-            else: snake.wrap_mode = False
+            if current_time < star_end_time: 
+                snake.wrap_mode = True
+            else:
+                sound_manager.stop_powerup_loop() 
+                snake.wrap_mode = False
 
             time_since_move = current_time - last_move_time
             if time_since_move >= move_delay:
@@ -538,6 +567,7 @@ def main():
                 
                 if star.active and head == star.position:
                     sound_manager.play_powerup()
+                    sound_manager.start_powerup_loop()
                     star_end_time = current_time + STAR_DURATION
                     star.active = False
 
@@ -554,7 +584,9 @@ def main():
                         sound_manager.play_crash()
                         snake.alive = False
 
-                if not snake.alive: current_state = STATE_GAMEOVER
+                if not snake.alive: 
+                    sound_manager.stop_powerup_loop()
+                    current_state = STATE_GAMEOVER
             
             alpha = time_since_move / move_delay
             if alpha > 1.0: alpha = 1.0
@@ -587,7 +619,7 @@ def main():
             game_surface.blit(score_text, (20, 20))
             if current_time < star_end_time:
                 remaining_sec = math.ceil((star_end_time - current_time) / 1000)
-                timer_text = font_score.render(f"Powerup: {remaining_sec}s", True, COLOR_TIMER)
+                timer_text = font_score.render(f"Powerups : {remaining_sec}s", True, COLOR_TIMER)
                 game_surface.blit(timer_text, (20, 55))
 
         elif current_state == STATE_PAUSE:
