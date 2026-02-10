@@ -49,7 +49,7 @@ sprites_loaded = False
 try:
     try:
         bg_image = pygame.image.load("background.png")
-    except:
+    except (pygame.error, FileNotFoundError):
         bg_image = None
 
     raw_head = pygame.image.load("head.png").convert_alpha()
@@ -108,8 +108,16 @@ class SoundManager:
     def __init__(self):
         self.sounds_enabled = True
         try:
-            pygame.mixer.get_init()
-        except:
+            # If the mixer isn't initialized get_init() will return None.
+            # Wrap in try/except to catch pygame-specific errors (e.g., no audio device).
+            if not pygame.mixer.get_init():
+                self.sounds_enabled = False
+        except pygame.error as e:
+            print(f"Warning: pygame.mixer unavailable ({e})")
+            self.sounds_enabled = False
+        except Exception as e:
+            # Catch other unexpected issues but avoid bare except
+            print(f"Warning: error checking mixer initialization: {e}")
             self.sounds_enabled = False
 
         # We must hold the sound object in a variable to stop it later
@@ -119,16 +127,22 @@ class SoundManager:
             try:
                 # Pre-load the loop sound specifically
                 self.powerup_loop_snd = pygame.mixer.Sound("powerup_loop.wav")
-            except:
-                print("Warning: powerup_loop.wav not found")
+            except (pygame.error, FileNotFoundError) as e:
+                print(f"Warning: powerup_loop.wav not found or failed to load ({e})")
 
     # This generic function is fine for one-off sounds (eat, crash)
     def play_sound(self, file_name):
-        if self.sounds_enabled:
-            try:
-                pygame.mixer.Sound(file_name).play()
-            except:
-                pass
+        if not self.sounds_enabled:
+            return
+        try:
+            snd = pygame.mixer.Sound(file_name)
+            snd.play()
+        except (pygame.error, FileNotFoundError) as e:
+            # Known pygame/file errors: warn but continue running
+            print(f"Warning: failed to play sound '{file_name}': {e}")
+        except Exception as e:
+            # Catch other unexpected errors without using a bare except
+            print(f"Warning: unexpected error playing sound '{file_name}': {e}")
 
     # One-shot sounds
     def play_eat(self):
